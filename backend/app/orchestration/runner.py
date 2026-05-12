@@ -8,7 +8,7 @@ import httpx
 
 from backend.app.orchestration.factory import build_agent
 from backend.app.orchestration.llm import chat_completion, rolling_history
-from backend.app.schemas import Attachment, Conversation, Message, RunRequest, utc_now
+from backend.app.schemas import AgentConfig, Attachment, Conversation, Message, RunRequest, utc_now
 from backend.app.storage import conversation_repo
 
 logger = logging.getLogger(__name__)
@@ -40,24 +40,97 @@ def _attachment_text(attachments: list[Attachment]) -> str:
     return "".join(parts)
 
 
-def _agent_prompt(agent_name: str, pattern: str) -> str:
+def _agent_prompt(agent: AgentConfig, agents: list[AgentConfig], pattern: str) -> str:
+    roster = "\n".join(
+        f"- {item.name}{' (you)' if item.id == agent.id else ''}" for item in agents
+    )
     return (
         "You are participating in a multi-agent discussion inside agent-room. "
-        f"You are speaking as {agent_name}. Keep your reply focused, concise, and useful. "
-        f"The current conversation pattern is {pattern}. Build on prior messages and do not "
-        "pretend to use tools you do not have."
+        f"The authoritative display name for this turn is {agent.name}. "
+        f"The current conversation pattern is {pattern}.\n\n"
+        "Agent roster:\n"
+        f"{roster}\n\n"
+        "Transcript labels are authoritative. Messages marked (you) are your own earlier "
+        "messages; do not address, agree with, or critique them as if another participant wrote "
+        "them. Messages marked (other agent) are from another configured agent. Keep your reply "
+        "focused, concise, and useful. Write only your next message content without a speaker "
+        "label, and do not pretend to use tools you do not have."
     )
 
 
-def _turn_input(conv: Conversation) -> str:
-    transcript = []
+def _format_message_for_agent(message: Message, current_agent: AgentConfig) -> str:
+    if message.role == "user":
+        speaker = "User"
+    elif message.agent_id == current_agent.id:
+        speaker = f"{message.name} (you)"
+    elif message.role == "assistant":
+        speaker = f"{message.name} (other agent)"
+    else:
+        speaker = message.name
+    return f"{speaker}: {message.content}"
+
+
+def _turn_input(conv: Conversation, current_agent: AgentConfig) -> str:
+    transcript: list[str] = []
     for message in conv.messages[-40:]:
-        transcript.append(f"{message.name}: {message.content}")
+        transcript.append(_format_message_for_agent(message, current_agent))
     return (
-        "Conversation so far:\n"
+        "Conversation so far, from your point of view:\n"
         + "\n\n".join(transcript)
-        + "\n\nNow provide your next contribution."
+        + f"\n\nYou are {current_agent.name}. Provide {current_agent.name}'s next contribution. "
+        "Do not include a speaker label. Do not reply to statements marked (you) as if they were "
+        "from another participant."
     )
+
+
+def _last_assistant_message(conv: Conversation) -> Message | None:
+    return next(
+        (message for message in reversed(conv.messages) if message.role == "assistant"),
+        None,
+    )
+
+
+def _eligible_free_flow_agents(conv: Conversation) -> list[AgentConfig]:
+    agents = conv.preset_snapshot.agents
+    if len(agents) <= 1:
+        return agents
+    last_message = _last_assistant_message(conv)
+    if not last_message or not last_message.agent_id:
+        return agents
+    eligible = [agent for agent in agents if agent.id != last_message.agent_id]
+    return eligible or agents
+
+
+def _fallback_free_flow_agent_id(conv: Conversation, candidates: list[AgentConfig]) -> str:
+    agents = conv.preset_snapshot.agents
+    if not candidates:
+        return agents[0].id
+    last_message = _last_assistant_message(conv)
+    if last_message and last_message.agent_id:
+        last_index = next(
+            (index for index, agent in enumerate(agents) if agent.id == last_message.agent_id),
+            -1,
+        )
+        if last_index >= 0:
+            candidate_ids = {agent.id for agent in candidates}
+            for offset in range(1, len(agents) + 1):
+                candidate = agents[(last_index + offset) % len(agents)]
+                if candidate.id in candidate_ids:
+                    return candidate.id
+    assistant_count = len([msg for msg in conv.messages if msg.role == "assistant"])
+    return candidates[assistant_count % len(candidates)].id
+
+
+def _match_agent_name(selected: str, agents: list[AgentConfig]) -> str | None:
+    cleaned = selected.strip().strip("`\"'")
+    for agent in agents:
+        if cleaned.casefold() == agent.name.casefold():
+            return agent.id
+    selected_normalized = cleaned.casefold()
+    for agent in agents:
+        if agent.name.casefold() in selected_normalized:
+            return agent.id
+    return None
 
 
 async def _choose_free_flow_agent(conv: Conversation) -> str:
@@ -65,15 +138,25 @@ async def _choose_free_flow_agent(conv: Conversation) -> str:
     names = [agent.name for agent in agents]
     if len(agents) == 1:
         return agents[0].id
+    candidates = _eligible_free_flow_agents(conv)
+    candidate_names = [agent.name for agent in candidates]
+    last_message = _last_assistant_message(conv)
+    last_speaker = last_message.name if last_message else "none"
     selector_model = conv.preset_snapshot.auto_agent_model or agents[0].model
     history = rolling_history(conv.messages, limit=12)
     system = (
         "Select the next speaker for a multi-agent discussion. "
-        "Return only the exact name of one available agent."
+        "Return only the exact name of one eligible agent. "
+        "Do not select the previous assistant speaker when another eligible agent exists."
     )
     user = {
         "role": "user",
-        "content": f"Available agents: {', '.join(names)}\n\nWho should speak next?",
+        "content": (
+            f"All agents: {', '.join(names)}\n"
+            f"Previous assistant speaker: {last_speaker}\n"
+            f"Eligible next speakers: {', '.join(candidate_names)}\n\n"
+            "Who should speak next?"
+        ),
     }
     try:
         selected = await chat_completion(
@@ -82,14 +165,13 @@ async def _choose_free_flow_agent(conv: Conversation) -> str:
             messages=[*history, user],
             temperature=0.2,
         )
-        for agent in agents:
-            if agent.name.lower() in selected.lower():
-                return agent.id
+        selected_id = _match_agent_name(selected, candidates)
+        if selected_id:
+            return selected_id
     except Exception as exc:
         logger.info("Free-flow selector fell back to local order: %s", exc)
 
-    assistant_count = len([msg for msg in conv.messages if msg.role == "assistant"])
-    return agents[(assistant_count * 2 + 1) % len(agents)].id
+    return _fallback_free_flow_agent_id(conv, candidates)
 
 
 async def _run_agent_turn(conv: Conversation, agent_id: str, queue: asyncio.Queue[dict]) -> None:
@@ -102,10 +184,12 @@ async def _run_agent_turn(conv: Conversation, agent_id: str, queue: asyncio.Queu
             "name": agent.name,
         }
     )
-    system_prompt = f"{agent.persona}\n\n{_agent_prompt(agent.name, conv.preset_snapshot.pattern)}"
+    prompt_rules = _agent_prompt(agent, conv.preset_snapshot.agents, conv.preset_snapshot.pattern)
+    system_prompt = f"{agent.persona}\n\n{prompt_rules}"
+    turn_input = _turn_input(conv, agent)
     try:
-        runtime_agent = build_agent(agent, _agent_prompt(agent.name, conv.preset_snapshot.pattern))
-        response = await runtime_agent.run(_turn_input(conv))
+        runtime_agent = build_agent(agent, prompt_rules)
+        response = await runtime_agent.run(turn_input)
         content = str(getattr(response, "text", "") or response).strip()
         if not content:
             content = f"{agent.name} completed the turn, but the model returned an empty response."
@@ -121,7 +205,7 @@ async def _run_agent_turn(conv: Conversation, agent_id: str, queue: asyncio.Queu
                 content = await chat_completion(
                     model=agent.model,
                     system_prompt=system_prompt,
-                    messages=rolling_history(conv.messages),
+                    messages=[{"role": "user", "content": turn_input}],
                 )
             except Exception as fallback_exc:
                 content = f"{agent.name} could not complete the turn: {fallback_exc}"
