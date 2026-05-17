@@ -24,7 +24,7 @@ async def chat_completion(
     model: str,
     system_prompt: str,
     messages: list[dict[str, str]],
-    temperature: float = 0.7,
+    temperature: float | None = None,
     response_format: Mapping[str, Any] | None = None,
 ) -> str:
     settings = get_settings()
@@ -32,9 +32,10 @@ async def chat_completion(
     payload: dict[str, object] = {
         "model": model or settings.default_model,
         "messages": [{"role": "system", "content": system_prompt}, *messages],
-        "temperature": temperature,
         "stream": False,
     }
+    if temperature is not None:
+        payload["temperature"] = temperature
     if response_format:
         payload["response_format"] = response_format
 

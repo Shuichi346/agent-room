@@ -10,4 +10,4 @@
 ## [Unreleased]
 
 - Initial scaffolding.
-
+- Changed conversation response fallback calls to inherit generation defaults from the configured OpenAI-compatible server instead of forcing `temperature: 0.7`.

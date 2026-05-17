@@ -19,4 +19,4 @@
 ## Re-entry Notes
 
 Check `NOTES.md` before changing orchestration, storage, or launcher behavior.
-
+- Conversation response calls should omit optional generation parameters such as `temperature` unless the UI or settings explicitly provide them; control calls such as speaker selection may set low temperatures.

@@ -2,6 +2,7 @@ import { History, UserCircle, Wifi } from 'lucide-react'
 import { useEffect } from 'react'
 
 import ChatStream from '../components/ChatStream'
+import ConversationDownload from '../components/ConversationDownload'
 import PromptInput from '../components/PromptInput'
 import { useAppStore } from '../lib/store'
 
@@ -24,6 +25,7 @@ export default function Simulation() {
             <i />
             {pattern === 'round_robin' ? 'Round Robin' : 'Free Flow'}
           </span>
+          <ConversationDownload />
           <Wifi size={22} />
           <History size={23} />
           <UserCircle size={24} />

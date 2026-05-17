@@ -50,6 +50,7 @@ interface AppState {
   currentPresetName: string
   conversations: ConversationSummary[]
   currentConversationId: string | null
+  currentConversationTitle: string
   messages: Message[]
   runStatus: 'idle' | 'running' | 'cancelling'
   abortController: AbortController | null
@@ -81,6 +82,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentPresetName: 'Working preset',
   conversations: [],
   currentConversationId: null,
+  currentConversationTitle: '',
   messages: [],
   runStatus: 'idle',
   abortController: null,
@@ -105,7 +107,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   setPattern: (pattern) => set({ pattern }),
   setMaxTurns: (value) => set({ maxTurns: Math.min(50, Math.max(1, value)) }),
   setAgents: (agents) => set({ agents }),
-  clearConversation: () => set({ currentConversationId: null, messages: [] }),
+  clearConversation: () => set({ currentConversationId: null, currentConversationTitle: '', messages: [] }),
   loadModels: async () => {
     const result = await api.models()
     const models = result.models.length ? result.models : [result.default]
@@ -121,6 +123,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const conversation = await api.conversation(conversationId)
     set({
       currentConversationId: conversation.id,
+      currentConversationTitle: conversation.title,
       messages: conversation.messages,
       currentPresetId: conversation.preset_snapshot.id,
       currentPresetName: conversation.preset_snapshot.name,
@@ -161,6 +164,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         if (event.type === 'conversation_started') {
           set((state) => ({
             currentConversationId: event.conversation_id,
+            currentConversationTitle:
+              state.currentConversationTitle || event.message.content.slice(0, 60).trim() || 'Untitled conversation',
             messages: [...state.messages, event.message],
           }))
         }
@@ -209,4 +214,3 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ runStatus: 'idle', abortController: null })
   },
 }))
-
