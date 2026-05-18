@@ -9,63 +9,73 @@
 
 # agent-room
 
-agent-room is a local-first multi-agent chat room for experimenting with role-based LLM discussions. It runs a FastAPI backend and a React/Vite frontend on `127.0.0.1`, talks to LM Studio through an OpenAI-compatible API, and persists presets and conversation logs as JSON under `./data/`.
+agent-room is a local-first multi-agent discussion workspace for LM Studio and other
+OpenAI-compatible local chat servers. It provides a React UI for configuring role-based agents,
+running multi-turn conversations, attaching reference material, and saving reusable presets. It
+also exposes JSON-first API and CLI workflows so other AI agents can discover capabilities, launch
+runs, and read persisted transcripts without driving the browser UI.
+
+## Table of Contents
+
+- [Preview](#preview)
+- [Features](#features)
+- [Requirements](#requirements)
+- [Quick Start](#quick-start)
+- [Configuration](#configuration)
+- [Using the App](#using-the-app)
+- [Agent API and CLI](#agent-api-and-cli)
+- [Development](#development)
+- [Testing](#testing)
+- [Project Structure](#project-structure)
+- [Troubleshooting](#troubleshooting)
+- [License](#license)
 
 ## Preview
 
 <img src="UI-image/UI-main.png" alt="agent-room simulation view" width="480">
 
-Simulation view with the active conversation, agent replies, attachments, and run controls.
+Simulation view with the active transcript, agent replies, attachments, and run controls.
 
 <img src="UI-image/UI-setting.png" alt="agent-room orchestration settings view" width="480">
 
-Orchestration view for presets, agent personas, model selection, conversation pattern, max turns, and auto agent generation.
+Orchestration view for presets, agent personas, model IDs, conversation pattern, maximum turns, and
+automatic agent drafting.
 
 ## Features
 
-- Multi-agent conversations with configurable agent names, personas, colors, and model IDs.
-- Round Robin and Free Flow conversation patterns.
-- Conversation streaming over Server-Sent Events from the FastAPI backend.
-- Conversation cancellation from the UI.
-- Preset save, import, export, and load workflows backed by JSON files.
-- Conversation history persisted under `./data/conversations/`.
-- URL attachments fetched as HTML/text only and normalized with `trafilatura`.
-- Image attachments validated as PNG, JPEG, or WebP, up to 10 MB and 4096 px per side.
-- Auto Agent Creation that asks the configured local model to draft agent personas for a theme.
-- Agent-facing JSON API and CLI for capability discovery, preset lookup, and non-streaming runs.
-- Single-process production-style serving: the backend mounts `frontend/dist/` when the UI is built.
-
-## Tech Stack
-
-- Backend: Python 3.13, FastAPI, Uvicorn, Pydantic Settings, httpx, Microsoft Agent Framework, Pillow, trafilatura.
-- Frontend: React 18, TypeScript, Vite, Tailwind CSS, Zustand, React Router, lucide-react.
-- Tooling: `uv` for Python dependency management, npm for frontend dependencies, Ruff for Python linting.
+- Configure up to eight agents with names, personas, colors, and model IDs.
+- Run conversations with Round Robin or Free Flow speaker selection.
+- Stream UI runs over Server-Sent Events and cancel active conversations.
+- Persist presets under `./data/presets/` and conversations under `./data/conversations/`.
+- Save, import, export, and reload preset JSON files.
+- Attach URL references fetched as HTML/text only and normalized with `trafilatura`.
+- Attach PNG, JPEG, or WebP images up to 10 MB and 4096 px per side.
+- Ask a configured local model to draft agent personas from a theme.
+- Use agent-oriented JSON APIs and a CLI for manifest discovery, preset lookup, non-streaming runs,
+  and transcript reads.
+- Serve the built React app from FastAPI in a single local process.
 
 ## Requirements
 
 - macOS 26 or later.
+- Python 3.13 or later.
 - Node.js 24 or later and npm.
 - `uv`.
-- LM Studio running locally with a chat model loaded.
-- LM Studio's OpenAI-compatible server available at the configured `OPENAI_BASE_URL`, defaulting to `http://localhost:1234/v1`.
+- LM Studio, or another OpenAI-compatible chat server, with a model loaded.
+- Local chat API reachable at `OPENAI_BASE_URL`, defaulting to `http://localhost:1234/v1`.
 
-## Installation
+## Quick Start
 
-Clone the repository, then run the launcher from the repository root:
+From the repository root:
 
 ```bash
 ./start.sh
 ```
 
-On first run, the launcher:
-
-1. Checks for `uv`, Node.js, and npm.
-2. Creates `.env` from `.env.example` when `.env` is missing.
-3. Installs Python dependencies with `uv sync`.
-4. Installs frontend dependencies with `npm install` when the built UI is missing or stale.
-5. Builds the frontend with `npm run build`.
-6. Starts FastAPI on `127.0.0.1:${APP_PORT:-8000}`.
-7. Opens the app in the default browser after `/api/health` responds.
+The launcher creates `.env` from `.env.example` when needed, installs Python dependencies with
+`uv sync`, installs frontend dependencies when the built UI is missing or stale, builds the React
+frontend, starts FastAPI on `127.0.0.1:${APP_PORT:-8000}`, and opens the app after `/api/health`
+responds.
 
 Stop the app with `Ctrl+C` in the launcher terminal, or run:
 
@@ -79,7 +89,7 @@ Copy `.env.example` to `.env` manually, or let `./start.sh` create it.
 
 | Key | Default | Purpose |
 | --- | --- | --- |
-| `OPENAI_BASE_URL` | `http://localhost:1234/v1` | OpenAI-compatible API base URL, typically LM Studio. |
+| `OPENAI_BASE_URL` | `http://localhost:1234/v1` | OpenAI-compatible API base URL, usually LM Studio. |
 | `OPENAI_API_KEY` | `lm-studio` | Bearer token sent to the configured API. |
 | `DEFAULT_MODEL` | `google/gemma-4-e2b` | Default model ID used by new agents and fallback model lists. |
 | `MAX_TURNS` | `10` | Backend default maximum turn count. |
@@ -87,39 +97,78 @@ Copy `.env.example` to `.env` manually, or let `./start.sh` create it.
 | `APP_PORT` | `8000` | Local FastAPI port. |
 | `APP_HOST` | `127.0.0.1` | Local FastAPI bind host. Keep this loopback-only. |
 
-The frontend can also read `VITE_API_BASE_URL`. When it is unset, API calls use same-origin paths such as `/api/models/`.
+The frontend can also read `VITE_API_BASE_URL`. When unset, API calls use same-origin paths such as
+`/api/models/`.
 
-## Usage
+## Using the App
 
 1. Start LM Studio and load a chat model.
 2. Run `./start.sh`.
-3. Open the Orchestration view to edit agents, choose Round Robin or Free Flow, and set max turns.
-4. Save a preset when you want to reuse the same agent configuration.
-5. Open the Simulation view, enter a prompt, optionally attach one or more URLs or images, and send the run.
-6. Use the stop button to cancel an active run.
+3. Open the Orchestration view.
+4. Edit agents, select Round Robin or Free Flow, and set the maximum turn count.
+5. Save a preset if you want to reuse the configuration.
+6. Open the Simulation view.
+7. Enter a prompt, optionally attach URLs or images, and start the run.
+8. Stop an active run from the UI when needed.
 
-Presets are stored in `./data/presets/`. Conversations are stored in `./data/conversations/`. Generated JSON files in those directories are intentionally ignored by Git.
+Generated preset and conversation JSON files are intentionally ignored by Git.
 
 ## Agent API and CLI
 
-Autonomous callers can use JSON-first endpoints instead of the UI streaming endpoint:
+agent-room includes a non-streaming interface for autonomous callers that need complete JSON results
+instead of browser-oriented SSE streams.
+
+### HTTP
+
+Inspect machine-readable capabilities:
 
 ```bash
 curl http://127.0.0.1:8000/api/agents/manifest
+```
+
+Run a saved preset to completion:
+
+```bash
 curl -X POST http://127.0.0.1:8000/api/agents/run \
   -H 'Content-Type: application/json' \
   -d '{"preset_id":"YOUR_PRESET_ID","prompt":"Discuss this task.","max_turns":3}'
 ```
 
-The same functionality is available without starting an HTTP client:
+The run endpoint also accepts an inline `preset` object instead of `preset_id`, optional
+`attachments`, and an optional `conversation_id` to continue an existing transcript.
+
+Useful API routes:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/agents/manifest` | Return agent-facing capabilities and storage locations. |
+| `POST` | `/api/agents/run` | Run a preset to completion and return JSON. |
+| `GET` | `/api/presets/` | List saved presets. |
+| `GET` | `/api/conversations/` | List saved conversations. |
+| `GET` | `/api/conversations/{conversation_id}` | Read a full transcript. |
+| `POST` | `/api/chat/run` | Stream a UI-oriented conversation over Server-Sent Events. |
+
+### CLI
+
+The CLI uses the same local storage and orchestration code as the API:
 
 ```bash
 uv run python -m backend.app.cli manifest
 uv run python -m backend.app.cli presets
+uv run python -m backend.app.cli conversations
+uv run python -m backend.app.cli show-conversation CONVERSATION_ID --format text
 uv run python -m backend.app.cli run --preset-id YOUR_PRESET_ID --prompt "Discuss this task."
 ```
 
-The CLI prints JSON by default. Use `--format text` on `run` or `show-conversation` for compact transcript output.
+You can also run from a preset file or pipe prompt text on stdin:
+
+```bash
+printf 'Compare these implementation options.' | \
+  uv run python -m backend.app.cli run --preset-file ./data/presets/example.json
+```
+
+CLI output is JSON by default. `run` and `show-conversation` support `--format text` for compact
+transcript output.
 
 ## Development
 
@@ -153,7 +202,7 @@ npm run dev
 
 ## Testing
 
-Run the Python unit tests:
+Run backend unit tests:
 
 ```bash
 uv run python -m unittest discover -s backend/tests
@@ -177,12 +226,12 @@ npm run build
 ```text
 backend/app/
   api/             FastAPI route modules.
-  orchestration/   Agent turn selection, prompting, streaming, and cancellation.
+  orchestration/   Agent prompting, turn selection, streaming, and JSON run completion.
   storage/         JSON persistence for presets and conversations.
   tools/           URL and image attachment helpers.
 frontend/src/
   components/      Reusable React UI components.
-  lib/             API client, types, and Zustand store.
+  lib/             API client, types, export helpers, and Zustand store.
   routes/          Simulation and Orchestration screens.
 data/
   presets/         Runtime preset JSON files.
@@ -191,10 +240,14 @@ data/
 
 ## Troubleshooting
 
-- If startup says the port is busy, stop the existing listener or run with another port, for example `APP_PORT=8001 ./start.sh`.
-- If the UI cannot load models, confirm LM Studio is running, its local server is enabled, and `OPENAI_BASE_URL` points to the correct `/v1` endpoint.
-- If a selected model cannot process images, the app still includes a text note that an image was attached.
-- If URL attachment fails, confirm the URL is `http` or `https` and returns text or HTML content under the backend size limit.
+- If startup says the port is busy, stop the existing listener or run with another port, for example
+  `APP_PORT=8001 ./start.sh`.
+- If the UI cannot load models, confirm the local chat server is running, a model is loaded, and
+  `OPENAI_BASE_URL` points to the correct `/v1` endpoint.
+- If a selected model cannot process images, agent-room still includes a text note that an image was
+  attached.
+- If URL attachment fails, confirm the URL is `http` or `https` and returns text or HTML content
+  within the backend size limit.
 
 ## License
 
