@@ -6,7 +6,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
-from backend.app.api import attachments, auto_agents, chat, conversations, health, models, presets
+from backend.app.api import (
+    agents,
+    attachments,
+    auto_agents,
+    chat,
+    conversations,
+    health,
+    models,
+    presets,
+)
 from backend.app.paths import get_project_root
 from backend.app.settings import get_settings
 
@@ -27,6 +36,7 @@ def create_app() -> FastAPI:
     app.include_router(conversations.router)
     app.include_router(attachments.router)
     app.include_router(chat.router)
+    app.include_router(agents.router)
     app.include_router(auto_agents.router)
 
     dist = get_project_root() / "frontend" / "dist"

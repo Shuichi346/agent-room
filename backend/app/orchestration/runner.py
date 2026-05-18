@@ -8,7 +8,15 @@ import httpx
 
 from backend.app.orchestration.factory import build_agent
 from backend.app.orchestration.llm import chat_completion, rolling_history
-from backend.app.schemas import AgentConfig, Attachment, Conversation, Message, RunRequest, utc_now
+from backend.app.schemas import (
+    AgentConfig,
+    AgentRunResponse,
+    Attachment,
+    Conversation,
+    Message,
+    RunRequest,
+    utc_now,
+)
 from backend.app.storage import conversation_repo
 
 logger = logging.getLogger(__name__)
@@ -256,7 +264,7 @@ async def _conversation_task(
         await queue.put({"type": "sentinel"})
 
 
-async def run_conversation(req: RunRequest) -> AsyncIterator[bytes]:
+async def run_conversation_events(req: RunRequest) -> AsyncIterator[dict]:
     existing = (
         conversation_repo.get_conversation(req.conversation_id) if req.conversation_id else None
     )
@@ -293,7 +301,7 @@ async def run_conversation(req: RunRequest) -> AsyncIterator[bytes]:
             event = await queue.get()
             if event.get("type") == "sentinel":
                 break
-            yield encode_sse(event)
+            yield event
     finally:
         cancel_event.set()
         _cancel_events.pop(conv.id, None)
@@ -301,3 +309,47 @@ async def run_conversation(req: RunRequest) -> AsyncIterator[bytes]:
             await asyncio.wait_for(task, timeout=2)
         except TimeoutError:
             task.cancel()
+
+
+async def run_conversation(req: RunRequest) -> AsyncIterator[bytes]:
+    async for event in run_conversation_events(req):
+        yield encode_sse(event)
+
+
+async def run_conversation_to_completion(req: RunRequest) -> AgentRunResponse:
+    conversation_id = req.conversation_id or ""
+    new_messages: list[Message] = []
+    status = "completed"
+    reason: str | None = None
+    error: str | None = None
+    event_count = 0
+
+    async for event in run_conversation_events(req):
+        event_count += 1
+        event_type = event.get("type")
+        conversation_id = str(event.get("conversation_id") or conversation_id)
+        if event_type == "conversation_started":
+            new_messages.append(Message.model_validate(event["message"]))
+        elif event_type == "message_complete":
+            new_messages.append(Message.model_validate(event["message"]))
+        elif event_type == "done":
+            reason = str(event.get("reason") or "")
+        elif event_type == "cancelled":
+            status = "cancelled"
+        elif event_type == "error":
+            status = "error"
+            error = str(event.get("message") or "")
+
+    conv = conversation_repo.get_conversation(conversation_id)
+    if conv is None:
+        raise KeyError(conversation_id)
+
+    return AgentRunResponse(
+        conversation_id=conversation_id,
+        conversation=conv,
+        new_messages=new_messages,
+        status=status,
+        reason=reason,
+        error=error,
+        event_count=event_count,
+    )

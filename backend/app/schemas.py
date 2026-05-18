@@ -2,7 +2,7 @@ from datetime import UTC, datetime
 from typing import Literal
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 def utc_now() -> datetime:
@@ -72,6 +72,45 @@ class RunRequest(StrictModel):
     prompt: str = Field(min_length=1)
     attachments: list[Attachment] = Field(default_factory=list)
     conversation_id: str | None = None
+
+
+class AgentRunRequest(StrictModel):
+    preset: Preset | None = None
+    preset_id: str | None = None
+    prompt: str = Field(min_length=1)
+    attachments: list[Attachment] = Field(default_factory=list)
+    conversation_id: str | None = None
+    max_turns: int | None = Field(default=None, ge=1, le=50)
+
+    @model_validator(mode="after")
+    def require_one_preset_source(self) -> "AgentRunRequest":
+        if bool(self.preset) == bool(self.preset_id):
+            raise ValueError("provide exactly one of preset or preset_id")
+        return self
+
+
+class AgentRunResponse(StrictModel):
+    conversation_id: str
+    conversation: Conversation
+    new_messages: list[Message]
+    status: Literal["completed", "cancelled", "error"]
+    reason: str | None = None
+    error: str | None = None
+    event_count: int
+
+
+class AgentCapability(StrictModel):
+    method: str
+    path: str
+    description: str
+
+
+class AgentManifest(StrictModel):
+    name: str
+    version: str
+    description: str
+    endpoints: list[AgentCapability]
+    storage: dict[str, str]
 
 
 class AutoAgentRequest(StrictModel):

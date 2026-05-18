@@ -11,3 +11,4 @@
 
 - Initial scaffolding.
 - Changed conversation response fallback calls to inherit generation defaults from the configured OpenAI-compatible server instead of forcing `temperature: 0.7`.
+- Added agent-facing manifest and non-streaming run APIs, plus a JSON-first CLI for presets, conversations, and runs.

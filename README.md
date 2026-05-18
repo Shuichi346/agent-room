@@ -32,6 +32,7 @@ Orchestration view for presets, agent personas, model selection, conversation pa
 - URL attachments fetched as HTML/text only and normalized with `trafilatura`.
 - Image attachments validated as PNG, JPEG, or WebP, up to 10 MB and 4096 px per side.
 - Auto Agent Creation that asks the configured local model to draft agent personas for a theme.
+- Agent-facing JSON API and CLI for capability discovery, preset lookup, and non-streaming runs.
 - Single-process production-style serving: the backend mounts `frontend/dist/` when the UI is built.
 
 ## Tech Stack
@@ -98,6 +99,27 @@ The frontend can also read `VITE_API_BASE_URL`. When it is unset, API calls use 
 6. Use the stop button to cancel an active run.
 
 Presets are stored in `./data/presets/`. Conversations are stored in `./data/conversations/`. Generated JSON files in those directories are intentionally ignored by Git.
+
+## Agent API and CLI
+
+Autonomous callers can use JSON-first endpoints instead of the UI streaming endpoint:
+
+```bash
+curl http://127.0.0.1:8000/api/agents/manifest
+curl -X POST http://127.0.0.1:8000/api/agents/run \
+  -H 'Content-Type: application/json' \
+  -d '{"preset_id":"YOUR_PRESET_ID","prompt":"Discuss this task.","max_turns":3}'
+```
+
+The same functionality is available without starting an HTTP client:
+
+```bash
+uv run python -m backend.app.cli manifest
+uv run python -m backend.app.cli presets
+uv run python -m backend.app.cli run --preset-id YOUR_PRESET_ID --prompt "Discuss this task."
+```
+
+The CLI prints JSON by default. Use `--format text` on `run` or `show-conversation` for compact transcript output.
 
 ## Development
 
